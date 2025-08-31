@@ -20,3 +20,11 @@ apt install htop -y
 apt echo on
 apt echo off
 ```
+---
+
+# 5) LICENSE
+Pick MIT (simple):
+```text
+MIT License
+Copyright (c) 2025 AirysDark
+Permission is hereby granted, free of charge, to any person obtaining a copy...
