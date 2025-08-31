@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# apt → pacman translation wrapper (Arch/BlackArch)
+# with built-in echo toggle and full help list
+
+set -euo pipefail
+ASSUME_YES=0
+CMD=""
+ARGS=()
+
+# config file for echo setting
+CONFIG_FILE="$HOME/.apt_wrapper.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+RASPB_ECHO=${raspbain_echo:-off}
+
+# parse arguments
+for a in "$@"; do
+  case "$a" in
+    -y|--yes|--assume-yes) ASSUME_YES=1 ;;
+    install|remove|purge|autoremove|update|upgrade|dist-upgrade|full-upgrade|search|show|list|policy|clean|autoclean|depends|rdepends|changelog|download|reinstall|edit-sources|showpkg|file|source|build-dep|echo|help|-h|--help)
+      CMD="$a"
+      ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+
+YFLAG=()
+[[ $ASSUME_YES -eq 1 ]] && YFLAG=(-y --noconfirm)
+
+run_cmd() {
+  if [[ "$RASPB_ECHO" == "on" ]]; then
+    echo -e "→ \e[32mTranslating:\e[0m $*"
+  fi
+  eval "$@"
+}
+
+case "$CMD" in
+  echo)
+    case "${ARGS[0]:-}" in
+      on)
+        echo 'raspbain_echo=on' > "$CONFIG_FILE"
+        echo "apt wrapper: echo ENABLED"
+        ;;
+      off)
+        echo 'raspbain_echo=off' > "$CONFIG_FILE"
+        echo "apt wrapper: echo DISABLED"
+        ;;
+      *)
+        echo "Usage: apt echo [on|off]"
+        ;;
+    esac
+    ;;
+  install)     run_cmd "sudo pacman -S ${YFLAG[*]} ${ARGS[*]}" ;;
+  reinstall)   run_cmd "sudo pacman -S ${YFLAG[*]} ${ARGS[*]}" ;;
+  remove)      run_cmd "sudo pacman -R ${YFLAG[*]} ${ARGS[*]}" ;;
+  purge)       run_cmd "sudo pacman -Rns ${YFLAG[*]} ${ARGS[*]}" ;;
+  autoremove)
+    ORPHANS=$(pacman -Qdtq || true)
+    if [[ -n "$ORPHANS" ]]; then
+      run_cmd "sudo pacman -Rns ${YFLAG[*]} $ORPHANS"
+    else
+      echo "Nothing to autoremove."
+    fi
+    ;;
+  update)      run_cmd "sudo pacman -Sy ${YFLAG[*]}" ;;
+  upgrade|dist-upgrade|full-upgrade)
+               run_cmd "sudo pacman -Syu ${YFLAG[*]}" ;;
+  search)      run_cmd "pacman -Ss ${ARGS[*]}" ;;
+  show|showpkg) run_cmd "pacman -Si ${ARGS[*]}" ;;
+  list)
+    if [[ "${ARGS[*]}" =~ --upgradable ]]; then
+      run_cmd "pacman -Qu"
+    elif [[ "${ARGS[*]}" =~ installed ]]; then
+      run_cmd "pacman -Q"
+    elif [[ ${#ARGS[@]} -gt 0 ]]; then
+      run_cmd "pacman -Q ${ARGS[*]}"
+    else
+      run_cmd "pacman -Q"
+    fi
+    ;;
+  policy)
+    for p in "${ARGS[@]}"; do
+      run_cmd "pacman -Si $p"
+      pacman -Si "$p" || true
+      echo
+    done
+    ;;
+  clean|autoclean) run_cmd "sudo paccache -r" ;;
+  depends)   for p in "${ARGS[@]}"; do run_cmd "pactree -d1 $p"; done ;;
+  rdepends)  for p in "${ARGS[@]}"; do run_cmd "pactree -r $p"; done ;;
+  changelog)
+    for p in "${ARGS[@]}"; do
+      echo "→ No direct changelog. Try: https://archlinux.org/packages/?q=$p"
+    done
+    ;;
+  download)
+    for p in "${ARGS[@]}"; do
+      pkgfile=$(pacman -Sp --noconfirm "$p" | head -n1)
+      if [[ -n "$pkgfile" ]]; then
+        run_cmd "curl -O $pkgfile"
+        curl -O "$pkgfile"
+      else
+        echo "Package $p not found."
+      fi
+    done
+    ;;
+  edit-sources)
+    echo "Use: sudo nano /etc/pacman.d/mirrorlist"
+    ;;
+  file)
+    echo "apt-file equivalent: sudo pacman -S pkgfile && sudo pkgfile -u && pkgfile <file>"
+    ;;
+  source|build-dep)
+    echo "apt source/build-dep not supported. Use PKGBUILD from Arch repos or AUR."
+    ;;
+  ""|help|-h|--help)
+    cat <<HELP
+apt wrapper for pacman (Arch/BlackArch)
+
+🔹 Package management:
+  apt install <pkg>        → pacman -S <pkg>
+  apt reinstall <pkg>      → pacman -S <pkg>
+  apt remove <pkg>         → pacman -R <pkg>
+  apt purge <pkg>          → pacman -Rns <pkg>
+  apt autoremove           → pacman -Rns (orphans)
+
+🔹 Updates:
+  apt update               → pacman -Sy
+  apt upgrade              → pacman -Syu
+  apt dist-upgrade         → pacman -Syu
+  apt full-upgrade         → pacman -Syu
+
+🔹 Queries:
+  apt search <term>        → pacman -Ss <term>
+  apt show <pkg>           → pacman -Si <pkg>
+  apt showpkg <pkg>        → pacman -Si <pkg>
+  apt list                 → pacman -Q
+  apt list installed       → pacman -Q
+  apt list <pkg>           → pacman -Q <pkg>
+  apt list --upgradable    → pacman -Qu
+  apt policy <pkg>         → pacman -Si <pkg>
+  apt depends <pkg>        → pactree -d1 <pkg>
+  apt rdepends <pkg>       → pactree -r <pkg>
+
+🔹 Maintenance:
+  apt clean                → paccache -r
+  apt autoclean            → paccache -r
+  apt changelog <pkg>      → Arch package info page
+
+🔹 Package files:
+  apt download <pkg>       → pacman -Sp + curl
+  apt file <file>          → pkgfile <file> (if installed)
+
+🔹 Sources:
+  apt edit-sources         → edit /etc/pacman.d/mirrorlist
+  apt source/build-dep     → not supported (use PKGBUILD)
+
+🔹 Echo control:
+  apt echo on              → enable translation echo
+  apt echo off             → disable translation echo
+
+⚙️  Echo mode is stored in $CONFIG_FILE
+Current: raspbain_echo=$RASPB_ECHO
+HELP
+    ;;
+  *)
+    echo "apt wrapper: unknown command '$CMD'" >&2
+    exit 2
+    ;;
+esac
